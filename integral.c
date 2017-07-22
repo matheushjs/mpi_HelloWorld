@@ -32,8 +32,14 @@ double integrate(double (*func)(double), double a, double b, int npartitions){
 	return result * interval;
 }
 
+int nextpow2(int n){
+	int i;
+	for(i = 1; i < n; i <<= 1);
+	return i;
+}
+
 int main(int argc, char *argv[]){
-	int myRank, commSize, p_share;
+	int i, myRank, commSize, p_share, step, lim;
 	double result, a_share, b_share;
 
 	MPI_Init(&argc, &argv);
@@ -42,7 +48,7 @@ int main(int argc, char *argv[]){
 
 	if(myRank == 0){
 		double a_in, b_in, delta;
-		int i, p_in;
+		int p_in;
 		
 		// Receive input from user
 		printf("Type [initial x] [final x] [number of partitions]:\n");
@@ -64,9 +70,15 @@ int main(int argc, char *argv[]){
 		result = integrate(integrand, a_in, a_in+delta, p_share);
 
 		// Receive others' work
-		for(i = 1; i < commSize; i++){
-			MPI_Recv(&a_share, 1, MPI_DOUBLE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			result += a_share;
+		lim = nextpow2(commSize);
+		step = lim / 2;
+		while(myRank < step){
+			for(i = myRank + step; i < lim && i < commSize; i += step){
+				MPI_Recv(&a_share, 1, MPI_DOUBLE, i, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				result += a_share;
+			}
+			lim = step;
+			step /= 2;
 		}
 
 		printf("Integration result: %lf\n", result);
@@ -80,8 +92,21 @@ int main(int argc, char *argv[]){
 		// do work
 		result = integrate(integrand, a_share, b_share, p_share);
 
-		// Send work to node 0
-		MPI_Send(&result, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+		// Receive others' work
+		lim = nextpow2(commSize);
+		step = lim / 2;
+		while(myRank < step){
+			for(i = myRank + step; i < lim && i < commSize; i += step){
+				MPI_Recv(&a_share, 1, MPI_DOUBLE, i, MPI_ANY_TAG, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+				result += a_share;
+			}
+			lim = step;
+			step /= 2;
+		}
+
+		// Send work forward
+		for(step = nextpow2(commSize)/2; myRank < step; step /= 2);
+		MPI_Send(&result, 1, MPI_DOUBLE, myRank - step, 0, MPI_COMM_WORLD);
 	}
 
 	MPI_Finalize();
